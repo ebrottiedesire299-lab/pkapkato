@@ -3,10 +3,15 @@ Service de résumé de documents Pkapkato.
 
 Flux :
   1. Extraire le texte brut du fichier uploadé (.txt ou .pdf pour le MVP).
-  2. Envoyer ce texte à Claude avec un prompt de résumé dédié
+  2. Envoyer ce texte à Gemini avec un prompt de résumé dédié
      (distinct du system prompt conversationnel, car la tâche est différente :
      ici on veut un résumé structuré, pas une réponse conversationnelle).
   3. Retourner le résumé pour stockage dans Document.summary_text.
+
+Utilise Gemini (comme chat_service.py) car Google propose un vrai palier
+gratuit et permanent (sans carte bancaire), suffisant pour un MVP en phase de test.
+Nécessite la variable d'environnement GOOGLE_API_KEY en production
+(clé obtenue gratuitement sur https://aistudio.google.com).
 
 Limites volontaires du MVP :
   - Formats supportés : .txt, .pdf uniquement (pas de .docx/.pptx pour l'instant).
@@ -17,11 +22,10 @@ Limites volontaires du MVP :
 import io
 import os
 
-import anthropic
+from google import genai
 from pypdf import PdfReader
 
-MODEL_NAME = "claude-sonnet-4-6"
-MAX_TOKENS = 800
+MODEL_NAME = "gemini-3-flash-preview"
 
 # Sécurité coût/contexte : on tronque le texte source avant de l'envoyer au LLM.
 MAX_SOURCE_CHARS = 15000
@@ -38,13 +42,14 @@ class EmptyDocumentError(Exception):
 
 
 def _get_client():
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY n'est pas définie. "
-            "Ajoutez-la à votre environnement avant de lancer le serveur."
+            "GOOGLE_API_KEY n'est pas définie. "
+            "Créez une clé gratuite sur https://aistudio.google.com et "
+            "ajoutez-la à votre environnement avant de lancer le serveur."
         )
-    return anthropic.Anthropic(api_key=api_key)
+    return genai.Client(api_key=api_key)
 
 
 def extract_text(filename: str, file_bytes: bytes) -> str:
@@ -87,11 +92,10 @@ def summarize_document(subject: str, text: str) -> str:
     )
 
     client = _get_client()
-    response = client.messages.create(
+    response = client.models.generate_content(
         model=MODEL_NAME,
-        max_tokens=MAX_TOKENS,
-        system=system_prompt,
-        messages=[{"role": "user", "content": truncated_text}],
+        contents=truncated_text,
+        config={"system_instruction": system_prompt},
     )
 
-    return "".join(block.text for block in response.content if block.type == "text")
+    return response.text
